@@ -56,6 +56,16 @@ def predict_transform(prediction,inp_dim,anchors,num_classes,CUDA=True):
     prediction[:,:,:4] *= stride #center coords, hgth, wdth transformed 
 
     return prediction  #this prediction containes final bounding box dimensions and can be drawn in the input image to generate output with bounding boxes
+
+def unique(tensor):  #used to select one true detection per class present in any image instead of many
+    tensor_np = tensor.cpu().numpy()
+    unique_np = np.unique(tensor_np)
+    unique_tensor = torch.from_numpy(unique_np)
+
+    tensor_res = tensor.new(unique_tensor.shape)
+    tensor_res.copy_(unique_tensor)
+    return tensor_res
+
 def write_results(prediction, confidence, num_classes, nms_conf=0.4):
         # confidence -> objectiveness score threshold
         # nms_conf -> NMS IoU threshold
@@ -74,8 +84,10 @@ def write_results(prediction, confidence, num_classes, nms_conf=0.4):
         batch_size = prediction.size(0)
         
         write = False
-        for ind in range(batch_size):
+        for ind in range(batch_size):            
             image_pred = prediction[ind] #ind indexed image in batch -. image tensor output
+            
+            #instead 80 class scores add only max score and index of it
             max_conf, max_conf_score = torch.max(image_pred[:,5:5+num_classes],1) #find max of all probabilities -> determine class to which image belongs in dim=1
             # max_cof stores value of max conf, max_conf_score stores the index of the class
             max_conf = max_conf.float().unsqueeze(1)
@@ -93,6 +105,22 @@ def write_results(prediction, confidence, num_classes, nms_conf=0.4):
             if image_pred_.shape[0]==0:
                 continue
             img_classes = unique(image_pred_[:,-1]) # -1 index holds class index, gets all classes detected in image
+
+            for cls in img_classes: # cls represents a class amongst all classes detected
+                # NMS used
+
+                #get detection with one particular class denoted by cls
+                cls_mask = image_pred_*(image_pred_[:,-1] == cls).float().unsqueeze(1) #creates mask for the class
+                class_mask_ind = torch.nonzero(cls_mask[:,-2]).squeeze() #only the nonzero rows remain -> squeezed
+                image_pred_class = image_pred_[class_mask_ind].view(-1,7) #flattens the tensor
+
+                # sort -> max objectiveness score object on top
+                conf_sort_index = torch.sort(image_pred_class[:,4],descending=True)[1]
+                image_pred_class = image_pred_class[conf_sort_index]
+                idx = image_pred_class.size(0) # no. of detections
+
+
+
 
 
 
