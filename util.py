@@ -66,6 +66,28 @@ def unique(tensor):  #used to select one true detection per class present in any
     tensor_res.copy_(unique_tensor)
     return tensor_res
 
+#calculate IoU for box in Ist arg with each of the boxes in 2nd arg
+def bbox_iou(box1, box2):
+    # coords of 2 boxes
+    b1_x1, b1_y1, b1_x2, b1_y2 = box1[:,0], box1[:,1], box1[:,2], box1[:,3]
+    b2_x1, b2_y1, b2_x2, b2_y2 = box2[:,0], box2[:,1], box2[:,2], box2[:,3]
+
+    #coords of intersection rect
+    inter_rect_x1 = torch.max(b1_x1, b2_x1) #top_left corner
+    inter_rect_y1 = torch.max(b1_y1, b2_y1)
+    inter_rect_x2 = torch.min(b1_x2, b2_x2) #bottom_right corner
+    inter_rect_y2 = torch.min(b1_y2, b2_y2)   
+
+    #intersection area
+    inter_area = torch.clamp(inter_rect_x2-inter_rect_x1+1, min=0)*torch.clamp(inter_rect_y2-inter_rect_y1+1,min=0)
+    #union area
+    b1_area = (b1_x2-b1_x1+1)*(b1_y2-b1_y1+1)
+    b2_area = (b2_x2-b2_x1+1)*(b2_y2-b2_y1+1)
+    
+    iou=inter_area/(b1_area+b2_area-inter_area)
+
+    return iou
+
 def write_results(prediction, confidence, num_classes, nms_conf=0.4):
         # confidence -> objectiveness score threshold
         # nms_conf -> NMS IoU threshold
@@ -119,6 +141,65 @@ def write_results(prediction, confidence, num_classes, nms_conf=0.4):
                 image_pred_class = image_pred_class[conf_sort_index]
                 idx = image_pred_class.size(0) # no. of detections
 
+                for i in range(idx):
+                    #get IoU for all boxes
+                    try:
+                        ious = bbox_iou(image_pred_class[i].unsqueeze(0),image_pred_class[i+1:]) #bbox_iou -> return iou of 1st box with each box in 2nd arg
+                    except ValueError: #if no more boxes are left in 2nd arg
+                        break
+                    except IndexError: #if no boxes are left -> both errors imply the checking is done and we can stop NMS
+                        break
+
+                    # zero all detections with IoU > thershold -> too similar match
+                    iou_mask = (ious< nms_conf).float().unsqueeze(1)
+                    image_pred_class[i+1:] *= iou_mask
+
+                    #remove nonzero entries
+                    non_zero_ind = torch.nonzero(image_pred_class[:,4]).squeeze()
+                    image_pred_class = image_pred_class[non_zero_ind].view(-1,7)
+
+                batch_ind = image_pred_class.new(image_pred_class.size(0),1).fill_(ind)
+                seq = batch_ind, image_pred_class
+
+                if not write:
+                    output = torch.cat(seq,1)
+                    write =True
+                else:
+                    out = torch.cat(seq,1)
+                    output = torch.cat((output,out))  #output tensor contains all bounding boxes that predict all different classes
+
+        try:
+            return output  # if there is any detection then output tensor has been initialized
+        except:
+            return 0  # means no detection in the image -> so no result
+
+def load_classes(namesfile): # returns a dictionary with class index and corresponding names
+    fp = open(namesfile, "r")
+    names = fp.read().split("\n")[:-1]
+    return names
+
+def letterbox_image(img, inp_dim): # this function resizes the images and pads left out areas with color
+    # resize image with unchanged aspect ratio using padding
+    img_w, img_h = img.shape[1], img.shape[0]
+    w, h = inp_dim
+    new_w = int(img_w * min(w/img_w, h/img_h))
+    new_h = int(img_h * min(w/img_w, h/img_h))
+    resized_image = cv2.resize(img, (new_w,new_h), interpolation = cv2.INTER_CUBIC)
+    
+    canvas = np.full((inp_dim[1], inp_dim[0], 3), 128)
+
+    canvas[(h-new_h)//2:(h-new_h)//2 + new_h,(w-new_w)//2:(w-new_w)//2 + new_w,  :] = resized_image
+    
+    return canvas
+
+def prep_image(img, inp_dim):
+    # prepares image as per pytorch requirement
+    # convert BGR to RGB, brings channel dimension to first dimension
+    img = cv2.resize(img, (inp_dim, inp_dim))
+    img = img[:,:,::-1].transpose((2,0,1)).copy()
+    img = torch.from_numpy(img).float().div(255.0).unsqueeze(0)
+    return img
+    
 
 
 
