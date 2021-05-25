@@ -5,6 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 import numpy as np
+from util import *
 
 class EmptyLayer(nn.Module):  # for defining route layer
     def __init__(self):
@@ -48,9 +49,96 @@ class Darknet(nn.Module):
                 
             elif module_type=="shortcut":
                 from_=int(module["from"])
-                x=outputs[i-1]+outputs[i+from_]                
+                x=outputs[i-1]+outputs[i+from_]  
 
+            # yolo layer
+            elif module_type=="yolo":
+                anchors = self.module_list[i][0].anchors
+                inp_dim = int(self.net_info["height"])
+                num_classes = int(module["classes"])
 
+                x = x.data
+                if CUDA:
+                    x=x.cuda()
+                x = predict_transform(x,inp_dim,anchors,num_classes,CUDA)  #from util.py
+                if not write:  #when write=0 i.e., it is the first scale detection
+                    detections = x
+                    write = 1
+                else:
+                    detections = torch.cat((detections,x),1) # concatenate the detection of  all three scales into one big tensor
+
+            outputs[i] = x
+
+        return detections 
+
+    # pre-trained weights download
+    def load_weights(self, weightfile):
+        fp = open(weightfile, "rb")
+        # read first 5 values from weightfile which represents the header 
+        # 1.major version number 2.minor version number 3.subversion number 4,5.images seen by the network
+        header = np.fromfile(fp, dtype = np.int32, count = 5) 
+        self.header = torch.from_numpy(header)
+        self.seen = self.header[3] 
+
+        weights = np.fromfile(fp, dtype = np.float32) # now weights are stored here
+        
+        ptr=0  # marks current position in weights file
+        for i in range(len(self.module_list)):
+            
+            module_type = self.blocks[i+1]["type"]  #first block member is net
+            
+            if module_type == "convolutional":
+                model=self.module_list[i]
+                try:
+                    batch_normalize = int(self.blocks[i+1]["batch_normalize"])
+                except:
+                    batch_normalize = 0
+                
+                conv = model[0] # represents the Conv2d layer
+                if batch_normalize:
+                    bn = model[1]
+                    num_bn_biases = bn.bias.numel() #numel() returns no. of parameters -> no. of elements in input tensor
+
+                    bn_biases = torch.from_numpy(weights[ptr:ptr+num_bn_biases]) # creates pytorch tensor from numpy ndarray
+                    ptr += num_bn_biases
+
+                    bn_weights = torch.from_numpy(weights[ptr:ptr+num_bn_biases]) #same no. of weights as biases
+                    ptr += num_bn_biases
+
+                    bn_running_mean = torch.from_numpy(weights[ptr:ptr+num_bn_biases])
+                    ptr += num_bn_biases
+
+                    bn_running_var = torch.from_numpy(weights[ptr:ptr+num_bn_biases])
+                    ptr += num_bn_biases
+
+                    #change shape of loaded weights into shape of model weights
+                    bn_biases = bn_biases.view_as(bn.bias.data)  #bn.bias is initialized with random weights but with shape as per cfg file
+                    bn_weights = bn_weights.view_as(bn.weight.data)
+                    bn_running_mean = bn_running_mean.view_as(bn.running_mean)  #running var and running means prevents output from becoming zero if 1 input given instead of batch of inputs
+                    bn_running_var = bn_running_var.view_as(bn.running_var)
+
+                    # all the weights are now copied to the initialzed tensors
+                    bn.bias.data.copy_(bn_biases)
+                    bn.weight.data.copy_(bn_weights)
+                    bn.running_mean.copy_(bn_running_mean)
+                    bn.running_var.copy_(bn_running_var)
+                
+                else: # when no batch_norm layer present then only conv biases are extra
+                    num_biases = conv.bias.numel()
+                    conv_biases = torch.from_numpy(weights[ptr:ptr+num_biases])
+                    ptr += num_biases
+
+                    conv_biases = conv_biases.view_as(conv.bias.data)
+                    conv.bias.data.copy_(conv_biases)
+                
+                #both batch_normalized and not b_normalized have conv_weights in common
+                num_weights = conv.weight.numel()
+                conv_weights = torch.from_numpy(weights[ptr:ptr+num_weights])
+                ptr += num_weights
+
+                conv_weights = conv_weights.view_as(conv.weight.data)
+                conv.weight.data.copy_(conv_weights) #still conv.weight is the final layer but we copy data with help of variable
+        
 
 # cfg file contains values of all parameters used in original paper of YOLOv3
 # we use these parameters directly using the cfg file(configuration file)
@@ -96,7 +184,7 @@ def create_modules(blocks): # creates modules obtained from parse_cfg
         if(x["type"]=="convolutional"):
             activation=x["activation"]
             try:
-                batchnormalize=int(x["batchnormalize"])
+                batchnormalize=int(x["batch_normalize"])
                 bias=False
             except:
                 batchnormalize=0
@@ -119,7 +207,7 @@ def create_modules(blocks): # creates modules obtained from parse_cfg
             # add batchnormalize layer
 
             if batchnormalize:
-                bn = nn.BtachNorm2d(filters)
+                bn = nn.BatchNorm2d(filters)
                 module.add_module("batch_norm_{0}".format(index),bn)
             
             # now add activation layer
@@ -183,3 +271,16 @@ def create_modules(blocks): # creates modules obtained from parse_cfg
 
 # blocks=parse_cfg("cfg/yolov3.cfg")
 # print(create_modules(blocks))
+
+def get_test_input():
+    img = cv2.imread("dog-cycle-car.png")
+    img = cv2.resize(img,(608,608))
+    img_ = img[:,:,::-1].transpose((2,0,1))  #BGR -> RGB  by changing the tensor,  img[:,:,::-1] reads R channel from back
+    img_ = img_[np.newaxis,:,:,:]/255.0  #another channel added for batch and img normalised
+    img_ = torch.from_numpy(img_).float() #converted to float
+    img_ = Variable(img_) #converted to Variable
+    return img_
+
+
+model = Darknet("cfg/yolov3.cfg")
+model.load_weights("yolov3.weights")
