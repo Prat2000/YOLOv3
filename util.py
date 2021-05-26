@@ -113,6 +113,7 @@ def write_results(prediction, confidence, num_classes, nms_conf=0.4):
             max_conf, max_conf_score = torch.max(image_pred[:,5:5+num_classes],1) #find max of all probabilities -> determine class to which image belongs in dim=1
             # max_cof stores value of max conf, max_conf_score stores the index of the class
             max_conf = max_conf.float().unsqueeze(1)
+            max_conf_score = max_conf_score.float().unsqueeze(1)
             seq = (image_pred[:,:5], max_conf, max_conf_score)
             image_pred = torch.cat(seq, 1)
 

@@ -166,17 +166,19 @@ for i in range(output.shape[0]):
     output[i, [2,4]] = torch.clamp(output[i, [2,4]], 0.0, im_dim_list[i,1])
 
 #chooses colors for different bounding boxes
+output_recast = time.time()
 class_load = time.time()
 colors = pkl.load(open("pallete", "rb"))
 
 #draws nounding boxes
 draw = time.time()
 
-def write(x, results, color):
+def write(x, results):
     c1 = tuple(x[1:3].int())
     c2 = tuple(x[3:5].int())
     img = results[int(x[0])]
     cls = int(x[-1])
+    color = random.choice(colors)
     label = "{0}".format(classes[cls])
     cv2.rectangle(img, c1, c2,color, 1)
     t_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_PLAIN, 1 , 1)[0]
