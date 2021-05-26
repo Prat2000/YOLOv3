@@ -87,9 +87,6 @@ im_batches = list(map(prep_image, loaded_ims, [inp_dim for x in range(len(imlist
 im_dim_list = [(x.shape[1], x.shape[0]) for x in loaded_ims]
 im_dim_list = torch.FloatTensor(im_dim_list).repeat(1,2)
 
-if CUDA:
-    im_dim_list = im_dim_list.cuda()
-
 #creates batches
 leftover = 0
 if (len(im_dim_list) % batch_size):
@@ -100,6 +97,9 @@ if batch_size != 1:
    im_batches = [torch.cat((im_batches[i*batch_size : min((i +  1)*batch_size,
                        len(im_batches))]))  for i in range(num_batches)]  
 
+if CUDA:
+    im_dim_list = im_dim_list.cuda()
+
 # start detection, print time required to make each detection
 write = 0
 start_det_loop = time.time()
@@ -108,8 +108,9 @@ for i, batch in enumerate(im_batches):
     start = time.time()
     if CUDA:
         batch = batch.cuda()
-
-    prediction = model(Variable(batch, volatile = True), CUDA)
+    
+    with torch.no_grad():
+        prediction = model(Variable(batch, volatile = True), CUDA)
 
     prediction = write_results(prediction, confidence, num_classes, nms_conf = nms_thresh)
 

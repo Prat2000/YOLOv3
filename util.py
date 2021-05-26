@@ -117,7 +117,7 @@ def write_results(prediction, confidence, num_classes, nms_conf=0.4):
             seq = (image_pred[:,:5], max_conf, max_conf_score)
             image_pred = torch.cat(seq, 1)
 
-            non_zero_ind = torch.nonzero(image_pred[:,4]) #get rid of low objectiveness score boxes
+            non_zero_ind = (torch.nonzero(image_pred[:,4])) #get rid of low objectiveness score boxes
             
             #if there are no predictions
             try:
@@ -196,7 +196,7 @@ def letterbox_image(img, inp_dim): # this function resizes the images and pads l
 def prep_image(img, inp_dim):
     # prepares image as per pytorch requirement
     # convert BGR to RGB, brings channel dimension to first dimension
-    img = cv2.resize(img, (inp_dim, inp_dim))
+    img = (letterbox_image(img, (inp_dim, inp_dim)))
     img = img[:,:,::-1].transpose((2,0,1)).copy()
     img = torch.from_numpy(img).float().div(255.0).unsqueeze(0)
     return img
